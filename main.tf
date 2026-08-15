@@ -1,5 +1,5 @@
 resource "aws_vpc" "main" {
-  cidr_block       = "10.0.0.0/16"
+  cidr_block       = "172.16.0.0/16"
   instance_tenancy = "default"
 
   tags = {
@@ -12,7 +12,7 @@ resource "aws_vpc" "main" {
 resource "aws_subnet" "public" {
   vpc_id = aws_vpc.main.id
 
-  cidr_block = "10.0.0.0/24"
+  cidr_block = "172.16.0.0/24"
 
   tags = {
     Name = "Public subnet"
@@ -22,7 +22,7 @@ resource "aws_subnet" "public" {
 resource "aws_subnet" "private" {
   vpc_id = aws_vpc.main.id
 
-  cidr_block = "10.0.1.0/24"
+  cidr_block = "172.16.1.0/24"
 
   tags = {
     Name = "Private subnet"
@@ -83,7 +83,7 @@ resource "aws_route_table" "private_rtb" {
   vpc_id = aws_vpc.main.id
 
   route {
-    cidr_block = var.local_ip
+    cidr_block = var.any_ip
     gateway_id = aws_nat_gateway.nat.id
   }
 
@@ -95,4 +95,91 @@ resource "aws_route_table" "private_rtb" {
 resource "aws_route_table_association" "private" {
   route_table_id = aws_route_table.private_rtb.id
   subnet_id      = aws_subnet.private.id
+}
+
+# security groups
+# public security group with ingress and egress rules
+resource "aws_security_group" "public_sg" {
+  name   = "public-sg"
+  description = "Allow ssh connection from local IP, all http inbound traffic and all outbound traffic"
+
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "Public security group"
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "ssh_rule_pub" {
+  description = "Security group rule allowing incoming ssh traffic from local IP"
+
+  security_group_id = aws_security_group.public_sg.id
+
+  ip_protocol = "tcp"
+  from_port   = 22
+  to_port     = 22
+  cidr_ipv4   = var.local_ip
+
+}
+
+resource "aws_vpc_security_group_ingress_rule" "http_rule_pub" {
+  description = "Security group rule allowing all incoming http traffic"
+
+  security_group_id = aws_security_group.public_sg.id
+
+  ip_protocol = "tcp"
+  from_port = 80
+  to_port = 80
+  cidr_ipv4 = var.any_ip
+}
+
+resource "aws_vpc_security_group_egress_rule" "egress_rule_pub" {
+  description = "Security group rule allowing any outgoing traffic"
+
+  security_group_id = aws_security_group.public_sg.id
+
+  ip_protocol = -1
+  cidr_ipv4 = var.any_ip
+}
+
+# private security group with igress and egress rules
+resource "aws_security_group" "private_sg" {
+  name = "private-sg"
+  description = "Allow only ssh traffic from public-sg"
+
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "Private security group"
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "ssh_rule_prvt" {
+  description = "Allow ssh connection from public-sg"
+
+  security_group_id = aws_security_group.private_sg.id
+  referenced_security_group_id = aws_security_group.public_sg.id
+
+  ip_protocol = "tcp"
+  from_port = 22
+  to_port = 22
+}
+
+resource "aws_vpc_security_group_ingress_rule" "app_rule_prvt" {
+  description = "Allow access from public SG"
+
+  security_group_id =  aws_security_group.private_sg.id
+  referenced_security_group_id = aws_security_group.public_sg.id
+
+  ip_protocol = "tcp"
+  from_port = 8080
+  to_port = 8080
+}
+
+resource "aws_vpc_security_group_egress_rule" "egress_rule_prvt" {
+  description = "Allow outbound access"
+
+  security_group_id = aws_security_group.private_sg.id
+  ip_protocol =  -1
+  cidr_ipv4 = var.any_ip
 }
