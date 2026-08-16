@@ -7,6 +7,27 @@ resource "aws_vpc" "main" {
   }
 }
 
+resource "aws_vpc_endpoint" "sm" {
+  vpc_id = aws_vpc.main.id
+  service_name = "com.amazonaws.${var.region}.secretsmanager"
+  vpc_endpoint_type = "Interface"
+
+  subnet_ids = [
+    aws_subnet.public.id,
+    aws_subnet.private.id
+  ]
+
+  security_group_ids = [
+    aws_security_group.vpc_endpoint_sg.id
+  ]
+
+  private_dns_enabled = true
+
+  tags = {
+    Name = "Secrets manager vpc endpoint"
+  }
+}
+
 # subnets
 
 resource "aws_subnet" "public" {
@@ -182,4 +203,26 @@ resource "aws_vpc_security_group_egress_rule" "egress_rule_prvt" {
   security_group_id = aws_security_group.private_sg.id
   ip_protocol =  -1
   cidr_ipv4 = var.any_ip
+}
+
+# vpc endpoint security group
+resource "aws_security_group" "vpc_endpoint_sg" {
+  name = "vpc-endpoint-sg"
+  description = "Allow HTTPS inbound traffic from EC2 to Secrets Manager"
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "VPC endpoint security group"
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "http_rule_endpoint" {
+  description = "Allow http inbound traffic"
+
+  security_group_id = aws_security_group.vpc_endpoint_sg.id
+  referenced_security_group_id = aws_security_group.public_sg.id
+
+  ip_protocol = "tcp"
+  from_port = 443
+  to_port = 443
 }
