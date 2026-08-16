@@ -1,7 +1,10 @@
 resource "aws_vpc" "main" {
   cidr_block       = "172.16.0.0/16"
   instance_tenancy = "default"
-
+  
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+  
   tags = {
     Name = "main"
   }
@@ -34,6 +37,7 @@ resource "aws_subnet" "public" {
   vpc_id = aws_vpc.main.id
 
   cidr_block = "172.16.0.0/24"
+  availability_zone = data.aws_availability_zones.available.names[0]
 
   tags = {
     Name = "Public subnet"
@@ -44,6 +48,7 @@ resource "aws_subnet" "private" {
   vpc_id = aws_vpc.main.id
 
   cidr_block = "172.16.1.0/24"
+  availability_zone = data.aws_availability_zones.available.names[1]
 
   tags = {
     Name = "Private subnet"
@@ -225,4 +230,85 @@ resource "aws_vpc_security_group_ingress_rule" "http_rule_endpoint" {
   ip_protocol = "tcp"
   from_port = 443
   to_port = 443
+}
+
+# KMS key & secrets manager
+
+resource "aws_kms_key" "secret_key" {
+  description = "Custom secret KMS key"
+  deletion_window_in_days = 7
+  enable_key_rotation = true
+
+  tags = {
+    Name = "Secrets manager KMS key"
+  }
+}
+
+
+resource "aws_secretsmanager_secret" "secret" {
+  name = "secret-key"
+  kms_key_id = aws_kms_key.secret_key.arn
+
+  tags = {
+    Name = "Secret key"
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "secret_version" {
+  secret_id = aws_secretsmanager_secret.secret.id
+  secret_string = var.secret_value
+}
+
+
+# IAM role and policies
+
+# Trust policy
+resource "aws_iam_role" "ec2_secrets_role" {
+  name = "ec2-secrets-manager-role"
+  assume_role_policy =  data.aws_iam_policy_document.ec2_assume_role.json
+
+  tags = {
+    Name = "EC2 Secrets Manager role"
+  } 
+}
+
+# Secrets manager access policy
+resource "aws_iam_policy" "secrets_access_policy" {
+  name = "ec2-secrets-access-policy"
+  description = "Allows EC2 to read secrets and decrypt keys using KMS"
+  policy = data.aws_iam_policy_document.secrets_access.json
+}
+
+resource "aws_iam_role_policy_attachment" "secrets_access_attachment" {
+  role = aws_iam_role.ec2_secrets_role.name
+  policy_arn = aws_iam_policy.secrets_access_policy.arn
+}
+
+# Instance profile to pass to aws Instance
+
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "aws-ec2-instance-profile"
+  role = aws_iam_role.ec2_secrets_role.name
+}
+
+# AWS EC2 instance 
+
+resource "aws_key_pair" "main" {
+  key_name   = "aws-ec2-key"
+  public_key = file("~/.ssh/aws_ec2_key.pub")
+}
+
+resource "aws_instance" "main" {
+  ami = data.aws_ami.ubuntu.id
+  region = var.region
+  instance_type = var.ec2_instance_type
+  key_name = aws_key_pair.main.key_name
+
+  subnet_id = aws_subnet.public.id
+  vpc_security_group_ids = [aws_security_group.public_sg.id]
+  associate_public_ip_address = true
+
+  user_data_base64 = filebase64("${path.module}/user-data.sh")
+
+  iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
 }
